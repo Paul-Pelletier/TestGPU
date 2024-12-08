@@ -7,11 +7,12 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress INFO and WARNING logs
 
 # Generate synthetic dataset
 x_train = tf.random.normal([1000, 1])  # Simplified to 1 feature for easy visualization
-y_train = 3 * x_train**2 + tf.random.normal([1000, 1])  # y = 3x + noise
+y_train = 3 * x_train**2 + tf.random.normal([1000, 1])  # y = x^3 + 3x^2 + noise
 
 # Define a simple model
 model = tf.keras.Sequential([
     tf.keras.layers.Dense(256, activation='relu', input_shape=(1,)),  # Input shape for 1 feature
+    tf.keras.layers.Dense(128, activation='relu'),
     tf.keras.layers.Dense(128, activation='relu'),
     tf.keras.layers.Dense(128, activation='relu'),
     tf.keras.layers.Dense(1)
@@ -20,19 +21,46 @@ model = tf.keras.Sequential([
 # Compile the model
 model.compile(optimizer='adam', loss='mse')
 
-# Train the model and measure training time
-start_time = time.time()
-history = model.fit(x_train, y_train, epochs=20, batch_size=100, verbose=0)  # Collect training loss
-end_time = time.time()
+# Create a tf.data.Dataset
+batch_size = 200
+dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train)).batch(batch_size)
 
-print("Training Time on GPU: {:.4f} seconds".format(end_time - start_time))
+# Train the model using a custom training loop
+epochs = 50
+print("Starting training...")
+start_time = time.time()
+
+# Lists to store epoch-wise loss for plotting
+epoch_losses = []
+
+for epoch in range(epochs):
+    print(f"\nEpoch {epoch + 1}/{epochs}")
+    epoch_loss = 0
+    batch_count = 0
+
+    for batch, (x_batch, y_batch) in enumerate(dataset):
+        batch_count += 1
+        with tf.GradientTape() as tape:
+            predictions = model(x_batch, training=True)
+            loss = tf.keras.losses.MSE(y_batch, predictions)
+            batch_loss = tf.reduce_mean(loss)
+        gradients = tape.gradient(batch_loss, model.trainable_weights)
+        model.optimizer.apply_gradients(zip(gradients, model.trainable_weights))
+
+        # Accumulate epoch loss and print batch progress
+        epoch_loss += batch_loss.numpy()
+        print(f"Batch {batch + 1}/{len(dataset)} - Loss: {batch_loss.numpy():.4f}")
+
+    # Average epoch loss
+    epoch_loss /= batch_count
+    epoch_losses.append(epoch_loss)
+    print(f"Epoch {epoch + 1} Loss: {epoch_loss:.4f}")
+
+end_time = time.time()
+print(f"Training completed in {end_time - start_time:.4f} seconds.")
 
 # Make predictions
 y_pred = model.predict(x_train)
-
-# Extract loss values from the history object
-loss_values = history.history['loss']
-epochs = range(1, len(loss_values) + 1)
 
 # Plotting
 plt.figure(figsize=(12, 10))
@@ -49,7 +77,7 @@ plt.grid()
 
 # Plot 2: Loss Function Across Epochs
 plt.subplot(2, 1, 2)
-plt.plot(epochs, loss_values, label="Training Loss", marker='o')
+plt.plot(range(1, epochs + 1), epoch_losses, label="Training Loss", marker='o')
 plt.title("Loss Function Across Epochs")
 plt.xlabel("Epochs")
 plt.ylabel("Loss")
